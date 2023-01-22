@@ -1,18 +1,517 @@
+---
 openapi: 3.0.2
 info:
-  title: My API
+  title: Housecat
   version: 1.0.0
+  description: |
+    Housecat lets players compete in games and wager tokens against one another.
+    Game devs can register games with Housecat and receive a cut of the prize pool when their game is played.
+
+    These docs describe 
+    * How Housecat works, from creating Challenges and playing games, to getting paid and cashing out
+    * How to register your own game, and get paid when its played
+    * The Housecat API Spec 
+
+    ## How it works for players
+    Housecat Challenges consist of at least one game and a token wager, and any player can create them. 
+    The Challenge creator specifies the set of games as well as the rules of each one, e.g. easy mode or hard mode.
+    The set of rules exposed to the creator is defined by the game developer when the game is registered or updated.
+    Each Challenge has a unique Challenge Code, which can be shared for other players to join.
+    Players are shown the set of games, configurations, and the token wager, and can decide to accept the Challenge by placing the wager.
+
+    Housecat has two types of tokens: regular CAT and cool
+    CAT. Regular CAT is what player's purchase using their credit card, and can be used to bet on
+    Challenges, but it cannot be cashed out. Cool CAT can be used to bet
+    AND cash out, but requires that the player gets verified by Housecat's KYC process. Once verified, players 
+    receive cool CAT every time they win, and oherwise, receive regular CAT. 
+        
+        When a Challenge is complete, a portion of the prize pool also goes to your Housecat account, which you can cash out.
+
+    After a player has joined the Challenge, they can start playing and submitting on-the-record game sessions.
+    The player's browser is redirected to the game with a unique game session id in the query parameters.
+    The game dev is responsible for managing each game session. 
+    The player will play a round of the game, and once complete, the game dev server will POST the score to Housecat's API using the game session id.
+
+    After all players have participated, the game server needs to allocate Challenge points. 
+    Each game must assign exactly 1.0 Challenge point across each player participant.
+    The game server is responsible for submitting Challenge points to Housecat however it chooses. 
+    A few examples
+    * In Pong, player A scores 5, player B scores 6. The Pong server submits player A: 1.0 Challenge points, and player B: 0.0.
+    * In Golf, player A gets 12 strokes, player B, 10. The Golf server submits player B: 1.0, even though 10 is lower than 12.
+    * In Racing, player A finishes in 2:00, and player B, 3:00. The Racing server submits player A: 0.6, player B: 0.4 Challenge points.
+
+    After all games for the Challenge have had their Challenge points posted, Housecat sums up the Challenge points per player, and allocates the prize pool according to the prize structure.
+    For example, imagine two players who wagered 50 CAT each on a Challenge with one game, the Challenge prize structure is winner-take-all, and player A wins. 
+    The token allocation might be
+    * player A receives 95 CAT
+    * Game dev receives 2 CAT 
+    * Housecat receives 3 CAT
+
+    ## How to get access as a game dev
+
+    First thing is to create a free Housecat account on the demo environment by navigating to `app.demo.housecat.io`.
+    You will create your team and an API key. This API key should be kept secret and stored on your game server.
+    Then you will use Housecat's `Register Game API` to provide the definition of your game.
+    This info includes things like
+    * How it should look and be described to prospective players in the Housecat Game Selector
+    * A list of each game configuration, for example, Mode can be 'easy' or 'hard', or a number of rounds
+
+    Once registered, you can test your integration by creating Challenges that include your game on the demo environment using test tokens.
+    You will need do the following to integrate Housecat
+    * Host your game, and allow players to navigate to it in their browser.
+    * Extract the game session id out of the query parameters, and pass it to your game server
+    * Let the player take their shot on your game!
+    * Record their score by posting it to Housecat's game session API 
+    * Allocate Challenge points according to their game scores
+
+    After the integration is looking good on your end, Housecat will verify the integration, and then grant access to production.
+    In order to earn cool CAT that can be converted to USD and cashed out, you will need to do the KYC process and get approved.
+    If you have a business, you can do the KYB instead.
+
+    Finally, once you're approved, and your game is live on prod and getting some action, you will start earning cool CAT. 
+    You can login at any point, and request to cash out your cool CAT. 
+    This will require that you provide an external account to receive your USD, and after a cash out review, you'll have your earnings in a couple days.
+
+    ## Notes about the API  
+
+    * All calls require that you specify a header `X-HOUSECAT-TOKEN: <your API key>`
+    * If there's an issue with the request, the API will return a 400 with a descriptive error message
+
 servers:
-  - url: https://api.example.com/v1
+  - url: https://api.housecat.io
+  - url: https://api.demo.housecat.io
 paths:
-  /message:
-    get:
-      summary: Returns a message
+  /game/create:
+    post:
+      tags:
+        - Game Spec
+      summary: Register your game with Housecat
+      description: |
+        After registering your game, Challenge creators will see it in the Game Selector.
+
+        <img width="400" src="https://housecat-public-assets.s3.us-west-2.amazonaws.com/game-selector.png" />
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterGameRequest'
+      security:
+        - housecat_auth: []
       responses:
-        200:
-          description: Message returned successfully
+        '201':
+          description: Game registered successfully
           content:
             application/json:
               schema:
+                $ref: '#/components/schemas/GameSpec'
+        '400':
+          description: Bad request, the response will indicate any issues
+  /challenge/session/{gameSessionId}:
+    get:
+      tags:
+        - Game
+      summary: Retrieve game session by ID
+      parameters:
+        - in: path
+          name: gameSessionId
+          required: true
+          schema:
+            type: string
+      security:
+        - housecat_auth: []
+      responses:
+        '200':
+          description: Successfully fetched game session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GameSession'
+    post:
+      tags:
+        - Game
+      summary: Submit game session status and score
+      parameters:
+        - in: path
+          name: gameSessionId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  example: Completed
+                score:
+                  type: number
+                  example: 20
+      security:
+        - housecat_auth: []
+      responses:
+        '200':
+          description: Successfully submitted game session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GameSession'
+  /challenge/game/{gameId}/finish:
+    post:
+      tags:
+        - Game
+      summary: Finish a game and submit Challenge points
+      parameters:
+        - in: path
+          name: gameId
+          description: This field was returned from GET/POST /challenge/session calls, `response.gameId`
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FinishGameRequest'
+      security:
+        - housecat_auth: []
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Game'
+  /challenge/game/{gameId}:
+    get:
+      tags:
+        - Game
+      summary: Retrieve game by ID
+      parameters:
+        - in: path
+          name: gameId
+          required: true
+          schema:
+            type: string
+      security:
+        - housecat_auth: []
+      responses:
+        '200':
+          description: Successfully fetched game
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Game'
+components:
+  securitySchemes:
+    housecat_auth:
+      type: apiKey
+      in: header
+      name: X-HOUSECAT-APIKEY
+  schemas:
+    RegisterGameRequest:
+      type: object
+      properties:
+        gameName:
+          type: string
+          example: golf
+        imageUrl:
+          type: string
+          example: https://housecat-public-assets.s3.us-west-2.amazonaws.com/golfball.png
+        gameSessionUrl:
+          type: string
+          example: <your game server>/golf
+        gameScoreUnitName:
+          type: string
+          example: Strokes
+        spec:
+          type: object
+          properties:
+            version:
+              type: string
+              example: 1.0.0
+            fields:
+              type: array
+              items:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    example: mode
+                  title:
+                    type: string
+                    example: Mode
+                  type:
+                    type: string
+                    example: Enum
+                  values:
+                    type: array
+                    items:
+                      type: string
+                      example: normal
+                  default:
+                    type: string
+                    example: normal
+
+    Challenge:
+      type: object
+      properties:
+        games:
+          type: array
+          items:
+            type: object
+            properties:
+              gameSpecId:
                 type: string
-                example: "Hello, World!"
+                example: $state.gameSpecId
+              spec:
+                type: object
+                properties:
+                  mode:
+                    type: string
+                    example: normal
+                  rounds:
+                    type: integer
+                    example: 2
+              gameId:
+                type: string
+                example: $str
+              challengeId:
+                type: string
+                example: $str
+              status:
+                type: string
+                example: Open
+              created:
+                type: string
+                example: $str
+              updated:
+                type: string
+                example: $str
+              scoreState:
+                type: object
+                properties: {}
+        entrants:
+          type: array
+          items:
+            type: object
+            properties:
+              challengeId:
+                type: string
+                example: $str
+              userId:
+                type: string
+                example: ''
+              wagerTransactionId:
+                type: string
+                example: ''
+              status:
+                type: string
+                example: Open
+              updated:
+                type: string
+                example: $str
+        creatorUserId:
+          type: string
+          example: $state.userId
+        challengeId:
+          type: string
+          example: $str
+        challengeCode:
+          type: string
+          example: $str
+        status:
+          type: string
+          example: Created
+        created:
+          type: string
+          example: $str
+        updated:
+          type: string
+          example: $str
+    GameSpec:
+      type: object
+      properties:
+        gameSpecId:
+          type: string
+          example: sesh_2Ke0rTrW8nHSwPjDYpIVkBV28gY
+        gameName:
+          type: string
+          example: Golf
+        devTeamId:
+          type: string
+          example: team_2KQ7wK7iCFzR263mDcOjwOgU8I3
+        status:
+          type: string
+          example: Active
+        imageUrl:
+          type: string
+          example: https://housecat-public-assets.s3.us-west-2.amazonaws.com/golfball.png
+        gameSessionUrl:
+          type: string
+          example: <your game server>/golf
+        gameScoreUnitName:
+          type: string
+          example: Strokes
+        spec:
+          type: object
+          properties:
+            version:
+              type: string
+              example: 1.0.0
+            fields:
+              type: array
+              items:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    example: mode
+                  title:
+                    type: string
+                    example: Game Mode
+                  description:
+                    type: string
+                    example: Try out Hard mode for extra challenge!
+                  type:
+                    type: string
+                    example: Enum
+                  values:
+                    type: array
+                    items:
+                      type: string
+                      example: normal
+                  default:
+                    type: string
+                    example: normal
+        created:
+          type: string
+          example: "2023-01-08 05:52:11"
+        updated:
+          type: string
+          example: "2023-01-08 05:52:11"
+    GameSession:
+      type: object
+      properties:
+        gameSessionId:
+          type: string
+          example: sesh_2KeuKw53nAPlYgB8XhJpR4T7xN9
+        gameId:
+          type: string
+          example: game_2KeuKlrdF1tB9T5iXBWqIrGxRas
+        userId:
+          type: string
+          example: user_2K1zyVeeTZsEaPua5fyCrKnN83X
+        challengeId:
+          type: string
+          example: chal_2KeuKhhIjQFfL4bphqh9Rk5dDZe
+        gameSpecId:
+          type: string
+          example: spec_2KeuKePoAyInB2zvEnri2AJliOg
+        status:
+          type: string
+          example: Completed
+        gameScore:
+          type: integer
+          example: 15
+        challengePoints:
+          type: integer
+          example: 0
+        spec:
+          type: object
+          properties:
+            mode:
+              type: string
+              example: normal
+        scoreState:
+          type: object
+          properties: {}
+        gameScores:
+          type: array
+          items:
+            type: object
+            properties:
+              gameSessionId:
+                type: string
+                example: sesh_2KeuL3FrjZSpaOqkePDvnZ4BOCa
+              gameScore:
+                type: integer
+                example: 0
+              status:
+                type: string
+                example: Open
+        updated:
+          type: string
+          format: date-time
+          example: "2023-01-22T00:28:29.523Z"
+    FinishGameRequest:
+      type: object
+      properties:
+        gameStatus:
+          type: string
+          example: Completed
+        sessionPoints:
+          type: array
+          items:
+            type: object
+            properties:
+              gameSessionId:
+                type: string
+                example: "sesh_2KevuMBYyGP9droSgvoSN4be6P4"
+              challengePoints:
+                type: number
+                description: The sum of Challenge points in this array must sum to 1.0
+                example: 0.25
+    Game: 
+      type: object
+      properties:
+        gameId:
+          type: string
+          example: "game_2Kevu7VZ9T2fTg9KzrVTvVD4n91"
+        challengeId:
+          type: string
+          example: "chal_2KevuC2o94zYUxE1KIxMCxKNF20"
+        gameSpecId:
+          type: string
+          example: "spec_2KevtusFHofNKzm5HTvoEW5C23Z"
+        status:
+          type: string
+          example: "Completed"
+        created:
+          type: string
+          format: date-time
+          example: "2023-01-22T00:41:22.480Z"
+        updated:
+          type: string
+          format: date-time
+          example: "2023-01-22T00:41:22.480Z"
+        spec:
+          type: object
+          properties:
+            mode:
+              type: string
+              example: "normal"
+        scoreState:
+          type: object
+        sessions:
+          type: array
+          items:
+            type: object
+            properties:
+              gameSessionId:
+                type: string
+                example: "sesh_2KevuNjYMYFofpiVE1GRyVTflyr"
+              gameId:
+                type: string
+                example: "game_2Kevu7VZ9T2fTg9KzrVTvVD4n91"
+              userId:
+                type: string
+                example: "user_2K1zyVeeTZsEa"
+
+
+
+
