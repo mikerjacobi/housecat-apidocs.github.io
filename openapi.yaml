@@ -448,6 +448,9 @@ components:
           type: string
           format: date-time
           example: "2023-01-22T00:28:29.523Z"
+        redirectUrl:
+          type: string
+          example: https://app.demo.housecat.io/challenge/ABC123
     FinishGameRequest:
       type: object
       properties:
