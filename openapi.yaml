@@ -409,6 +409,15 @@ components:
         challengeId:
           type: string
           example: chal_2KeuKhhIjQFfL4bphqh9Rk5dDZe
+        challengeCode:
+          type: string
+          example: BV8SFJ
+        structure:
+          type: object
+          properties:
+            numEntrants:
+              type: integer
+              example: 2
         gameSpecId:
           type: string
           example: spec_2KeuKePoAyInB2zvEnri2AJliOg
